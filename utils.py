@@ -33,12 +33,18 @@ def shortest_path_length(G, anchor_nodes, partition_length):
     return dists_dict
 
 def merge_dicts(dicts):
+    """
+    Helper function for parallel shortest path calculation. Merges dicts from jobs into one
+    """
     result = {}
     for dictionary in dicts:
         result.update(dictionary)
     return result
 
 def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=12):
+    """
+    Distribute shortest path calculation jobs to async workers, merge dicts and return results
+    """
     nodes = list(G.nodes)
     pool = mp.Pool(processes=num_workers)
     jobs = [pool.apply_async(shortest_path_length,
@@ -58,41 +64,33 @@ def get_simple_distance_vector(data):
     distance_embedding = []
     G = to_networkx(data)
 
-    #distances = [nx.single_source_shortest_path_length(G, i) for i in tqdm(range(data.num_nodes))] #calculate shortest path for all node connections
-
     dist_dict = all_pairs_shortest_path_length_parallel(G, data.anchor_nodes)
     distance_embedding = torch.as_tensor(list(dist_dict.values()))
-    
-    # pbar = tqdm(total=data.num_nodes)
-    # pbar.set_description('Computing distance to anchor nodes')
-
-    # for node in dist_dict.keys(): #loop through all nodes
-    #     inverted_anchor_distances = []
-    #     for anchor_node in data.anchor_nodes: #retrieve distance to anchor node per node
-    #         distance = node.get(anchor_node, 0) #get shortest path length, 0 if not connected
-    #         if distance > 0:
-    #             inverted_anchor_distances.append(1/distance) #normalized distance is 1/distance, 0 if not connected
-    #         else:
-    #             inverted_anchor_distances.append(distance)
-    #     distance_embedding.append(inverted_anchor_distances)
-    #     pbar.update(1)
-
     return distance_embedding
 
 
-def concat_into_features(embedding_matrix, data):
+def concat_into_features(embedding_matrix, data, caching):
     """
     Merge features and embedding matrix, returns combined feature matrix
     """
     embedding_tensor = torch.as_tensor(embedding_matrix)
+    if caching == True:
+        torch.save(embedding_tensor, 'cached_node_embeddings.pt')
     combined = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
     return combined
 
-def attach_distance_embedding(data):
-    print('sampling anchor nodes')
-    data.anchor_nodes = sample_anchor_nodes(data)
-    print('deriving shortest paths to anchor nodes')
-    embedding_matrix = get_simple_distance_vector(data)
-    extended_features = concat_into_features(embedding_matrix, data)
-    data.x = extended_features
-    print('feature matrix is blessed by the POPE')
+def attach_distance_embedding(data, caching=False, use_cache=False):
+    if use_cache == False:
+        print('sampling anchor nodes')
+        data.anchor_nodes = sample_anchor_nodes(data)
+        print('deriving shortest paths to anchor nodes')
+        embedding_matrix = get_simple_distance_vector(data)
+        extended_features = concat_into_features(embedding_matrix, data, caching=True)
+        data.x = extended_features
+        print('feature matrix is blessed by the POPE')
+    else:
+        print('loading cached distance embeddings')
+        embedding_tensor = torch.load('cached_node_embeddings.pt')
+        extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+        data.x = extended_features
+        print('feature matrix is blessed by the POPE')
