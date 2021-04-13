@@ -5,12 +5,20 @@ from torch_geometric.utils import to_networkx
 import multiprocessing as mp
 from tqdm import tqdm
 
-def sample_anchor_nodes(data, num_anchor_nodes):
+def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
     """
     Returns num_anchor_nodes amount of randomly sampled anchor nodes 
     """
-    node_indices = np.arange(data.num_nodes)
-    sampled_anchor_nodes = np.random.choice(node_indices, num_anchor_nodes)
+    if sampling_method == 'stochastic':
+        node_indices = np.arange(data.num_nodes)
+        sampled_anchor_nodes = np.random.choice(node_indices, num_anchor_nodes)
+
+    if sampling_method == 'pagerank':
+        G = to_networkx(data)
+        pagerank = nx.pagerank_scipy(G)
+        sorted_pagerank = {k: v for k, v in sorted(pagerank.items(), key=lambda item: item[1])}
+        sampled_anchor_nodes = list(sorted_pagerank.keys())[:32]
+
     return sampled_anchor_nodes
 
 def shortest_path_length(G, anchor_nodes, partition_length):
@@ -79,13 +87,13 @@ def concat_into_features(embedding_matrix, data, caching):
     combined = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
     return combined
 
-def attach_distance_embedding(data, num_anchor_nodes, caching=False, use_cache=False):
+def attach_distance_embedding(data, num_anchor_nodes, sampling_method, caching=False, use_cache=False):
     if use_cache == False:
         print('sampling anchor nodes')
-        data.anchor_nodes = sample_anchor_nodes(data, num_anchor_nodes)
+        data.anchor_nodes = sample_anchor_nodes(data=data, num_anchor_nodes=num_anchor_nodes, sampling_method=sampling_method)
         print('deriving shortest paths to anchor nodes')
-        embedding_matrix = get_simple_distance_vector(data)
-        extended_features = concat_into_features(embedding_matrix, data, caching=True)
+        embedding_matrix = get_simple_distance_vector(data=data)
+        extended_features = concat_into_features(embedding_matrix=embedding_matrix, data=data, caching=True)
         data.x = extended_features
         print('feature matrix is blessed by the POPE')
     else:

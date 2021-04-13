@@ -14,6 +14,7 @@ from torch_geometric.utils import degree
 
 from utils import attach_distance_embedding
 from logger import Logger
+import wandb
 
 path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr')
 dataset = Flickr(path)
@@ -33,6 +34,8 @@ parser.add_argument('--num_steps', type=int, default=5)
 parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--eval_steps', type=int, default=2)
 parser.add_argument('--runs', type=int, default=20)
+parser.add_argument('--num_anchor_nodes', type=int, default=32)
+parser.add_argument('--sampling_method', type=str, default='stochastic')
 args = parser.parse_args()
 print(args)
 
@@ -128,7 +131,11 @@ for run in range(args.runs):
     torch.backends.cudnn.benchmark = False
 
     print(f'torch seed: {run}')
-    attach_distance_embedding(data, num_anchor_nodes=128, use_cache=False)
+    wandb.init(project=f'GraphPOPE-stochastic-seed-{run}')
+    config = wandb.config
+    config.num_anchor_nodes=128
+
+    attach_distance_embedding(data, num_anchor_nodes=args.num_anchor_nodes, sampling_method=args.sampling_method, use_cache=False)
 
     def seed_worker(worker_id):
         worker_seed = torch.initial_seed() % 2**32
@@ -136,11 +143,12 @@ for run in range(args.runs):
         random.seed(worker_seed)
 
     loader = GraphSAINTRandomWalkSampler(data, batch_size=args.batch_size, walk_length=args.walk_length,
-                                     num_steps=args.num_steps, sample_coverage=100,
-                                     num_workers=4, worker_init_fn=seed_worker) 
+                                    num_steps=args.num_steps, sample_coverage=100,
+                                    num_workers=4, worker_init_fn=seed_worker) 
     
     model = Net(hidden_channels=256).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    wandb.watch(model) #w&b
     for epoch in range(1, 1 + args.epochs):
         loss = train()
         if epoch % args.log_steps == 0:
@@ -157,10 +165,18 @@ for run in range(args.runs):
                     f'Train: {100 * train_acc:.2f}%, '
                     f'Valid: {100 * valid_acc:.2f}% '
                     f'Test: {100 * test_acc:.2f}%')
+            wandb.log({'Run': run,
+                    'Epoch': epoch,
+                    'Train': 100 * train_acc,
+                    'Valid': 100 * valid_acc,
+                    'Test': 100 * test_acc})
 
     logger.add_result(run, result)
     logger.print_statistics(run)
 logger.print_statistics()
+
+    # except RuntimeError:
+    #     continue
 
 
 # for epoch in range(1, 51):
