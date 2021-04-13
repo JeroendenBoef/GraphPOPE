@@ -36,7 +36,7 @@ parser.add_argument('--runs', type=int, default=20)
 args = parser.parse_args()
 print(args)
 
-# attach_distance_embedding(data, use_cache=True)
+# attach_distance_embedding(data, num_anchor_nodes=128, use_cache=False)
 
 # loader = GraphSAINTRandomWalkSampler(data, batch_size=args.batch_size, walk_length=args.walk_length,
 #                                      num_steps=args.num_steps, sample_coverage=100,
@@ -128,7 +128,7 @@ for run in range(args.runs):
     torch.backends.cudnn.benchmark = False
 
     print(f'torch seed: {run}')
-    #attach_distance_embedding(data, use_cache=False)
+    attach_distance_embedding(data, num_anchor_nodes=128, use_cache=False)
 
     def seed_worker(worker_id):
         worker_seed = torch.initial_seed() % 2**32

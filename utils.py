@@ -5,7 +5,7 @@ from torch_geometric.utils import to_networkx
 import multiprocessing as mp
 from tqdm import tqdm
 
-def sample_anchor_nodes(data, num_anchor_nodes=32):
+def sample_anchor_nodes(data, num_anchor_nodes):
     """
     Returns num_anchor_nodes amount of randomly sampled anchor nodes 
     """
@@ -41,7 +41,7 @@ def merge_dicts(dicts):
         result.update(dictionary)
     return result
 
-def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=12):
+def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=4):
     """
     Distribute shortest path calculation jobs to async workers, merge dicts and return results
     """
@@ -79,10 +79,10 @@ def concat_into_features(embedding_matrix, data, caching):
     combined = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
     return combined
 
-def attach_distance_embedding(data, caching=False, use_cache=False):
+def attach_distance_embedding(data, num_anchor_nodes, caching=False, use_cache=False):
     if use_cache == False:
         print('sampling anchor nodes')
-        data.anchor_nodes = sample_anchor_nodes(data)
+        data.anchor_nodes = sample_anchor_nodes(data, num_anchor_nodes)
         print('deriving shortest paths to anchor nodes')
         embedding_matrix = get_simple_distance_vector(data)
         extended_features = concat_into_features(embedding_matrix, data, caching=True)
