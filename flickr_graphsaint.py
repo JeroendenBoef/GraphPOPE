@@ -34,7 +34,7 @@ parser.add_argument('--num_steps', type=int, default=5)
 parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--eval_steps', type=int, default=2)
 parser.add_argument('--runs', type=int, default=20)
-parser.add_argument('--num_anchor_nodes', type=int, default=32)
+parser.add_argument('--num_anchor_nodes', type=int, default=128)
 parser.add_argument('--sampling_method', type=str, default='stochastic')
 args = parser.parse_args()
 print(args)
@@ -117,6 +117,9 @@ def test():
     return accs
 
 logger = Logger(args.runs, args)
+wandb.init(project=f'GraphPOPE-{args.sampling_method}-{args.num_anchor_nodes}-nodes')
+config = wandb.config
+wandb.config.update(args) # adds all of the arguments as config variables
 
 for run in range(args.runs):
 
@@ -131,9 +134,7 @@ for run in range(args.runs):
     torch.backends.cudnn.benchmark = False
 
     print(f'torch seed: {run}')
-    wandb.init(project=f'GraphPOPE-stochastic-seed-{run}')
-    config = wandb.config
-    config.num_anchor_nodes=128
+    
 
     attach_distance_embedding(data, num_anchor_nodes=args.num_anchor_nodes, sampling_method=args.sampling_method, use_cache=False)
 
@@ -165,11 +166,11 @@ for run in range(args.runs):
                     f'Train: {100 * train_acc:.2f}%, '
                     f'Valid: {100 * valid_acc:.2f}% '
                     f'Test: {100 * test_acc:.2f}%')
-            wandb.log({'Run': run,
-                    'Epoch': epoch,
-                    'Train': 100 * train_acc,
-                    'Valid': 100 * valid_acc,
-                    'Test': 100 * test_acc})
+            wandb.log({
+                'Train': 100 * train_acc,
+                'Valid': 100 * valid_acc,
+                'Test': 100 * test_acc
+                })
 
     logger.add_result(run, result)
     logger.print_statistics(run)
