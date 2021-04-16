@@ -27,7 +27,7 @@ parser.add_argument('--use_normalization', action='store_true')
 parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--log_steps', type=int, default=1)
 parser.add_argument('--dropout', type=float, default=0.5)
-parser.add_argument('--batch_size', type=int, default=1000)
+parser.add_argument('--batch_size', type=int, default=3000)
 parser.add_argument('--walk_length', type=int, default=2)
 parser.add_argument('--lr', type=float, default=0.01)
 parser.add_argument('--num_steps', type=int, default=5)
@@ -145,7 +145,7 @@ for run in range(args.runs):
 
     loader = GraphSAINTRandomWalkSampler(data, batch_size=args.batch_size, walk_length=args.walk_length,
                                     num_steps=args.num_steps, sample_coverage=100,
-                                    num_workers=4, worker_init_fn=seed_worker) 
+                                    num_workers=2, worker_init_fn=seed_worker) 
     
     model = Net(hidden_channels=256).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
