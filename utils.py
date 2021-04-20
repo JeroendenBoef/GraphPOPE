@@ -4,6 +4,8 @@ import torch
 from torch_geometric.utils import to_networkx
 import multiprocessing as mp
 from tqdm import tqdm
+import os.path as osp
+from sys import exit
 
 def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
     """
@@ -53,17 +55,25 @@ def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=4):
     """
     Distribute shortest path calculation jobs to async workers, merge dicts and return results
     """
-    nodes = list(G.nodes)
-    pool = mp.Pool(processes=num_workers)
-    jobs = [pool.apply_async(shortest_path_length,
-            args=(G, anchor_nodes, nodes[int(len(nodes)/num_workers*i):int(len(nodes)/num_workers*(i+1))])) for i in range(num_workers)]
-    output = []
-    for job in tqdm(jobs):
-        output.append(job.get())
-    dists_dict = merge_dicts(output)
-    pool.close()
-    pool.join()
-    return dists_dict
+    try:
+        nodes = list(G.nodes)
+        pool = mp.Pool(processes=num_workers)
+        jobs = [pool.apply_async(shortest_path_length,
+                args=(G, anchor_nodes, nodes[int(len(nodes)/num_workers*i):int(len(nodes)/num_workers*(i+1))])) for i in range(num_workers)]
+        output = []
+        for job in tqdm(jobs):
+            output.append(job.get())
+        dists_dict = merge_dicts(output)
+        pool.close()
+        pool.join()
+        return dists_dict
+    
+    except KeyboardInterrupt:
+        print('terminating workers...')
+        pool.terminate()
+        pool.join()
+        print('workers terminated!')
+        sys.exit(1)
 
 def get_simple_distance_vector(data):
     """
@@ -102,3 +112,20 @@ def attach_distance_embedding(data, num_anchor_nodes, sampling_method, caching=F
         extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
         data.x = extended_features
         print('feature matrix is blessed by the POPE')
+
+def process_and_save_embedding(data, num_anchor_nodes, sampling_method, run):
+    save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
+    print('sampling anchor nodes')
+    data.anchor_nodes = sample_anchor_nodes(data=data, num_anchor_nodes=num_anchor_nodes, sampling_method=sampling_method)
+    print('deriving shortest paths to anchor nodes')
+    embedding_matrix = get_simple_distance_vector(data=data)
+    embedding_tensor = torch.as_tensor(embedding_matrix)
+    torch.save(embedding_tensor, save_path)
+    print(f'saved embedding as embedding_{sampling_method}_{num_anchor_nodes}_run_{run}')
+
+def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run):
+    load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
+    print('loading preprocessed embedding tensor...')
+    embedding_tensor = torch.load(load_path)
+    combined = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    data.x = extended_features
