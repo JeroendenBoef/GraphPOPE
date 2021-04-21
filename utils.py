@@ -127,5 +127,6 @@ def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run):
     load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
     print('loading preprocessed embedding tensor...')
     embedding_tensor = torch.load(load_path)
-    combined = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
     data.x = extended_features
+    print('attached preprocessed embedding')
