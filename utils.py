@@ -5,7 +5,7 @@ from torch_geometric.utils import to_networkx
 import multiprocessing as mp
 from tqdm import tqdm
 import os.path as osp
-from sys import exit
+import sys
 
 def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
     """
