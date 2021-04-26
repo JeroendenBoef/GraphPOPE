@@ -86,25 +86,49 @@ class Flickr(LightningDataModule):
                                     num_steps=args.num_steps, sample_coverage=100,
                                     num_workers=2, worker_init_fn=seed_worker)
 
-    def hidden_test_dataloader(self):
-        return NeighborSampler(self.adj_t, node_idx=self.test_idx,
-                               sizes=self.sizes, return_e_id=False,
-                               transform=self.convert_batch,
-                               batch_size=self.batch_size, num_workers=3)
-
+    
     def convert_batch(self, batch_size, n_id, adjs):
-        if self.in_memory:
-            x = self.x[n_id].to(torch.float)
-        else:
-            x = torch.from_numpy(self.x[n_id.numpy()]).to(torch.float)
-        y = self.y[n_id[:batch_size]].to(torch.long)
-        return Batch(x=x, y=y, adjs_t=[adj_t for adj_t, _, _ in adjs])
+        return Batch(
+            x=self.data.x[n_id],
+            y=self.data.y[n_id[:batch_size]],
+            adjs_t=[adj_t for adj_t, _, _ in adjs],
+        )
+
+class SaintGCN(lightningModule):
+    def __init__(self, in_channels: int, out_channels: int,
+                 hidden_channels: int = 256, num_layers: int = 3,
+                 dropout: float = 0.5):
+        super().__init__()
+        self.save_hyperparameters()
+        self.dropout = dropout
+
+        self.convs = ModuleList()
+        self.convs.append(GraphConv(in_channels, hidden_channels))
+        for _ in range(num_layers - 2):
+            self.convs.append(GraphConv(hidden_channels, hidden_channels))
+        self.convs.append(GraphConv(hidden_channels, hidden_channels))
+
+        self.lns = ModuleList()
+        self.lns.append(torch.nn.Linear(3 * hidden_channels, out_channels))
+
+        self.train_acc = Accuracy()
+        self.val_acc = Accuracy()
+        self.test_acc = Accuracy()
+
+    def forward(self, x: Tensor, adjs_t: List[SparseTensor]) -> Tensor:
+        for i, adj_t in enumerate(adjs_t):
+            x = self.convs[i]((x, x[:adj_t.size(0)]), adj_t)
+            if i < len(adjs_t) - 1:
+                x = self.lns[i](x)
+                x = x.relu_()
+                x = F.dropout(x, p=self.dropout, training=self.training)
+        return x
+
+#TODO: Figure out forward pass, worst case switch to graphsage format without concatenation.
+#TODO: Make github issue post asking for pointers on code, how to do forward pass, how does the adjs_t function,
 
 
 
-
-
-class Net(torch.nn.Module):
     def __init__(self, hidden_channels):
         super(Net, self).__init__()
         in_channels = data.x.size(1)#dataset.num_node_features
