@@ -14,11 +14,11 @@ from torch.nn import ModuleList, BatchNorm1d
 from pytorch_lightning.metrics import Accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
-from torch_geometric.data import GraphSAINTRandomWalkSampler, Data
+from torch_geometric.data import GraphSAINTRandomWalkSampler, NeighborSampler, Data
 from torch_geometric.datasets import Flickr as PyGFlickr
 from torch_geometric.nn import SAGEConv
 import torch_geometric.transforms as T
-from torch_geometric.utils import degree
+from torch_geometric.utils import degree, subgraph
 
 import wandb
 from logger import Logger
@@ -30,12 +30,12 @@ parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--log_steps', type=int, default=1)
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--batch_size', type=int, default=1000)
-parser.add_argument('--walk_length', type=int, default=2)
+parser.add_argument('--walk_length', type=int, default=3)
 parser.add_argument('--lr', type=float, default=0.01)
 parser.add_argument('--num_steps', type=int, default=5)
 parser.add_argument('--epochs', type=int, default=50)
 parser.add_argument('--eval_steps', type=int, default=2)
-parser.add_argument('--num_workers', type=int, default=0)
+parser.add_argument('--num_workers', type=int, default=2)
 parser.add_argument('--runs', type=int, default=20)
 parser.add_argument('--num_anchor_nodes', type=int, default=0)
 parser.add_argument('--sampling_method', type=str, default='stochastic')
@@ -82,24 +82,24 @@ class Flickr(LightningDataModule):
         self.data = PyGFlickr(self.data_dir)[0]
         row, col = self.data.edge_index
         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
+        train_index, train_weight = subgraph(self.data.train_mask, self.data.edge_index, self.data.edge_weight, relabel_nodes=True) #sample subgraph for graphsaint loader, relabel nodes
+        self.train_data = Data(edge_index=train_index, edge_weight=train_weight, x=self.data.x[self.data.train_mask], y=self.data.y[self.data.train_mask])
+        
 
-    #from reddit graphsage
     def train_dataloader(self):
-        return GraphSAINTRandomWalkSampler(Data(edge_index=self.data.edge_index, edge_weight=self.data.edge_weight, x=self.data.x[self.data.train_mask], 
-                                    y=self.data.y[self.data.train_mask]), batch_size=args.batch_size, walk_length=args.walk_length,
+        return GraphSAINTRandomWalkSampler(self.train_data, batch_size=self.batch_size, walk_length=args.walk_length,
                                     num_steps=args.num_steps, sample_coverage=0,
                                     num_workers=args.num_workers, worker_init_fn=seed_worker)
 
     def val_dataloader(self):
-        return GraphSAINTRandomWalkSampler(Data(edge_index=self.data.edge_index, edge_weight=self.data.edge_weight, x=self.data.x[self.data.val_mask], 
-                                    y=self.data.y[self.data.val_mask]), batch_size=args.batch_size, walk_length=args.walk_length,
-                                    num_steps=args.num_steps, sample_coverage=0,
-                                    num_workers=args.num_workers, worker_init_fn=seed_worker)
-    def test_dataloader(self):  # Test best validation model once again.
-        return GraphSAINTRandomWalkSampler(Data(edge_index=self.data.edge_index, edge_weight=self.data.edge_weight, x=self.data.x[self.data.test_mask], 
-                                    y=self.data.y[self.data.test_mask]), batch_size=args.batch_size, walk_length=args.walk_length,
-                                    num_steps=args.num_steps, sample_coverage=0,
-                                    num_workers=args.num_workers, worker_init_fn=seed_worker)
+        return NeighborSampler(self.data.edge_index, node_idx=self.data.val_mask, sizes=[25, 10],
+                                batch_size=self.batch_size, num_workers=args.num_workers, 
+                                worker_init_fn=seed_worker, persistent_workers=True)
+    
+    def val_dataloader(self):
+        return NeighborSampler(self.data.edge_index, node_idx=self.data.test_mask, sizes=[25, 10],
+                                batch_size=self.batch_size, num_workers=args.num_workers, 
+                                worker_init_fn=seed_worker, persistent_workers=True)
 
 
 class SaintGCN(LightningModule):
@@ -121,10 +121,15 @@ class SaintGCN(LightningModule):
         self.test_acc = Accuracy()
 
     def forward(self, x, edge_index, edge_weight=None):
+        print('\n', x, '\n', edge_index, '\n')
+        #print(f'X shape: {x.shape}, X type: {type(x)}')
+        print(f'edge_index shape: {edge_index.shape}, edge_index type: {type(edge_index)}')
+        print(f'edge_weight shape: {edge_weight.shape}, edge_weight type: {type(edge_weight)}')
         for conv in self.convs[:-1]:
             x = conv(x, edge_index, edge_weight)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.convs[-1](x, edge_index, edge_weight)
         return x
 
     def training_step(self, batch, batch_idx: int):
@@ -220,7 +225,7 @@ class SaintGCN(LightningModule):
 #     print(f'torch seed: {run}')
     
 #     load_preprocessed_embedding(data=data, num_anchor_nodes=args.num_anchor_nodes, sampling_method=args.sampling_method, run=run) #attach cached embedding
-#     loader = GraphSAINTRandomWalkSampler(data, batch_size=args.batch_size, walk_length=args.walk_length,
+#     loader = GraphSAINTRandomWalkSampler(data, batch_size=batch_size, walk_length=args.walk_length,
 #                                     num_steps=args.num_steps, sample_coverage=100,
 #                                     num_workers=2, worker_init_fn=seed_worker) 
     
@@ -261,7 +266,7 @@ def main():
     datamodule = Flickr(path, batch_size=args.batch_size)
     model = SaintGCN(datamodule.num_features, datamodule.num_classes)
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
-    trainer = Trainer(gpus=[1], max_epochs=10, callbacks=[checkpoint_callback])
+    trainer = Trainer(gpus=[0], max_epochs=10, callbacks=[checkpoint_callback])
 
     # Uncomment to train on multiple GPUs:
     # trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=10,
