@@ -14,7 +14,7 @@ from torch.nn import ModuleList, BatchNorm1d
 from pytorch_lightning.metrics import Accuracy
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
-from torch_geometric.data import GraphSAINTRandomWalkSampler, NeighborSampler, Data
+from torch_geometric.data import NeighborSampler, Data
 from torch_geometric.datasets import Flickr as PyGFlickr
 from torch_geometric.nn import SAGEConv
 import torch_geometric.transforms as T
@@ -23,6 +23,7 @@ from torch_geometric.utils import degree, subgraph
 import wandb
 from logger import Logger
 from utils import load_preprocessed_embedding
+from samplers import GraphSAINTRandomWalkSampler
 
 parser = argparse.ArgumentParser(description='Flickr Pytorch Lightning GraphSAINT')
 parser.add_argument('--use_normalization', action='store_true')
@@ -58,6 +59,10 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+class Batch(NamedTuple):
+    x: Tensor
+    y: Tensor
+    adjs_t: List[SparseTensor]
 
 class Flickr(LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int,
@@ -65,7 +70,7 @@ class Flickr(LightningDataModule):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
-        #self.transform = T.ToSparseTensor()
+        self.transform = T.ToSparseTensor(remove_edge_index=False)
 
     @property
     def num_features(self) -> int:
@@ -76,7 +81,7 @@ class Flickr(LightningDataModule):
         return 7
 
     def prepare_data(self):
-        PyGFlickr(self.data_dir)
+        PyGFlickr(self.data_dir, pre_transform=self.transform)
 
     def setup(self, stage: Optional[str] = None):
         self.data = PyGFlickr(self.data_dir)[0]
@@ -89,17 +94,28 @@ class Flickr(LightningDataModule):
     def train_dataloader(self):
         return GraphSAINTRandomWalkSampler(self.train_data, batch_size=self.batch_size, walk_length=args.walk_length,
                                     num_steps=args.num_steps, sample_coverage=0,
-                                    num_workers=args.num_workers, worker_init_fn=seed_worker)
+                                    num_workers=args.num_workers, worker_init_fn=seed_worker,
+                                    save_dir=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr-normalization'))
 
     def val_dataloader(self):
-        return NeighborSampler(self.data.edge_index, node_idx=self.data.val_mask, sizes=[25, 10],
-                                batch_size=self.batch_size, num_workers=args.num_workers, 
-                                worker_init_fn=seed_worker, persistent_workers=True)
+        return NeighborSampler(self.data.adj_t, node_idx=self.data.val_mask, sizes=[25, 10], 
+                                transform=self.convert_batch, batch_size=self.batch_size, 
+                                num_workers=args.num_workers, worker_init_fn=seed_worker, 
+                                persistent_workers=True)
     
-    def val_dataloader(self):
-        return NeighborSampler(self.data.edge_index, node_idx=self.data.test_mask, sizes=[25, 10],
-                                batch_size=self.batch_size, num_workers=args.num_workers, 
-                                worker_init_fn=seed_worker, persistent_workers=True)
+    def test_dataloader(self):
+        return NeighborSampler(self.data.adj_t, node_idx=self.data.test_mask, sizes=[25, 10], 
+                                transform=self.convert_batch, batch_size=self.batch_size, 
+                                num_workers=args.num_workers, worker_init_fn=seed_worker, 
+                                persistent_workers=True)
+
+    def convert_batch(self, batch_size, n_id, adjs):
+        return Batch(
+            x=self.data.x[n_id],
+            y=self.data.y[n_id[:batch_size]],
+            adjs_t=[adj_t for adj_t, _, _ in adjs],
+        )
+
 
 
 class SaintGCN(LightningModule):
@@ -121,30 +137,38 @@ class SaintGCN(LightningModule):
         self.test_acc = Accuracy()
 
     def forward(self, x, edge_index, edge_weight=None):
-        print('\n', x, '\n', edge_index, '\n')
-        #print(f'X shape: {x.shape}, X type: {type(x)}')
-        print(f'edge_index shape: {edge_index.shape}, edge_index type: {type(edge_index)}')
-        print(f'edge_weight shape: {edge_weight.shape}, edge_weight type: {type(edge_weight)}')
-        for conv in self.convs[:-1]:
-            x = conv(x, edge_index, edge_weight)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index, edge_weight)
+        #training loop on edge index long tensors   
+        if type(edge_index) != list: 
+            for conv in self.convs[:-1]:
+                x = conv(x, edge_index, edge_weight)
+                x = F.relu(x)
+                x = F.dropout(x, p=self.dropout, training=self.training)
+            x = self.convs[-1](x, edge_index, edge_weight)
+        
+        #inference is on pairs of sparse tensors
+        elif isinstance(edge_index[0], SparseTensor):
+            for i, adj_t in enumerate(edge_index):
+                x = self.convs[i]((x, x[:adj_t.size(0)]), adj_t)
+                if i < len(edge_index) - 1:
+                    #x = self.bns[i](x)
+                    x = x.relu_()
+                    #x = F.dropout(x, p=self.dropout, training=self.training)
+
         return x
 
     def training_step(self, batch, batch_idx: int):
-        #print(batch)
-        x, y, edge_index = batch
-        y_hat = self(x, edge_index)
-        train_loss = F.cross_entropy(y_hat, y)
-        train_acc = self.train_acc(y_hat.softmax(dim=-1), y)
+        y_hat = self(batch.x, batch.edge_index)
+        train_loss = F.cross_entropy(y_hat, batch.y)
+        train_acc = self.train_acc(y_hat.softmax(dim=-1), batch.y)
         self.log('train_acc', train_acc, prog_bar=True, on_step=False,
                  on_epoch=True)
         return train_loss
 
     def validation_step(self, batch, batch_idx: int):
+        #print(len(batch))
         x, y, edge_index = batch
         y_hat = self(x, edge_index)
+        #print(y_hat.softmax(dim=-1).shape, y.shape)
         val_acc = self.val_acc(y_hat.softmax(dim=-1), y)
         self.log('val_acc', val_acc, prog_bar=True, on_step=False,
                  on_epoch=True)
@@ -266,11 +290,11 @@ def main():
     datamodule = Flickr(path, batch_size=args.batch_size)
     model = SaintGCN(datamodule.num_features, datamodule.num_classes)
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
-    trainer = Trainer(gpus=[0], max_epochs=10, callbacks=[checkpoint_callback])
+    #trainer = Trainer(gpus=[0], max_epochs=10, callbacks=[checkpoint_callback])
 
     # Uncomment to train on multiple GPUs:
-    # trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=10,
-    #                   callbacks=[checkpoint_callback])
+    trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=10,
+                      callbacks=[checkpoint_callback])
 
     trainer.fit(model, datamodule=datamodule)
     trainer.test()
