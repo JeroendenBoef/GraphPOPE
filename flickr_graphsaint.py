@@ -12,7 +12,7 @@ from torch_geometric.data import GraphSAINTRandomWalkSampler
 from torch_geometric.nn import GraphConv
 from torch_geometric.utils import degree
 
-from utils import attach_distance_embedding
+from utils import load_preprocessed_embedding
 from logger import Logger
 import wandb
 
@@ -27,7 +27,7 @@ parser.add_argument('--use_normalization', action='store_true')
 parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--log_steps', type=int, default=1)
 parser.add_argument('--dropout', type=float, default=0.5)
-parser.add_argument('--batch_size', type=int, default=3000)
+parser.add_argument('--batch_size', type=int, default=1000)
 parser.add_argument('--walk_length', type=int, default=2)
 parser.add_argument('--lr', type=float, default=0.01)
 parser.add_argument('--num_steps', type=int, default=5)
@@ -136,7 +136,7 @@ for run in range(args.runs):
     print(f'torch seed: {run}')
     
 
-    attach_distance_embedding(data, num_anchor_nodes=args.num_anchor_nodes, sampling_method=args.sampling_method, use_cache=False)
+    load_preprocessed_embedding(data, num_anchor_nodes=args.num_anchor_nodes, sampling_method=args.sampling_method, run=run)
 
     def seed_worker(worker_id):
         worker_seed = torch.initial_seed() % 2**32

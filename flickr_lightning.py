@@ -94,8 +94,8 @@ class Flickr(LightningDataModule):
     def train_dataloader(self):
         return GraphSAINTRandomWalkSampler(self.train_data, batch_size=self.batch_size, walk_length=args.walk_length,
                                     num_steps=args.num_steps, sample_coverage=0,
-                                    num_workers=args.num_workers, worker_init_fn=seed_worker,
-                                    save_dir=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr-normalization'))
+                                    num_workers=args.num_workers, worker_init_fn=seed_worker)
+                                    #save_dir=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr-normalization'))
 
     def val_dataloader(self):
         return NeighborSampler(self.data.adj_t, node_idx=self.data.val_mask, sizes=[25, 10], 

@@ -9,7 +9,7 @@ import sys
 
 def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
     """
-    Returns num_anchor_nodes amount of randomly sampled anchor nodes 
+    Returns num_anchor_nodes amount of sampled anchor nodes based upon the sampling_method provided
     """
     if sampling_method == 'stochastic':
         node_indices = np.arange(data.num_nodes)
@@ -19,7 +19,37 @@ def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
         G = to_networkx(data)
         pagerank = nx.pagerank_scipy(G)
         sorted_pagerank = {k: v for k, v in sorted(pagerank.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes = list(sorted_pagerank.keys())[:32]
+        sampled_anchor_nodes = list(sorted_pagerank.keys())[:num_anchor_nodes]
+
+    if sampling_method == 'betweenness_centrality':
+        G = to_networkx(data)
+        betweenness_centrality = nx.betweenness_centrality(G)
+        sorted_betweenness_centrality = {k: v for k, v in sorted(betweenness_centrality.items(), key=lambda item: item[1])}
+        sampled_anchor_nodes = list(sorted_betweenness_centrality.keys())[:num_anchor_nodes]
+
+    if sampling_method == 'degree_centrality':
+        G = to_networkx(data)
+        degree_centrality = nx.degree_centrality(G)
+        sorted_degree_centrality = {k: v for k, v in sorted(degree_centrality.items(), key=lambda item: item[1])}
+        sampled_anchor_nodes = list(sorted_degree_centrality.keys())[:num_anchor_nodes]
+
+    if sampling_method == 'eigenvector_centrality':
+        G = to_networkx(data)
+        eigenvector_centrality = nx.eigenvector_centrality(G)
+        sorted_eigenvector_centrality = {k: v for k, v in sorted(eigenvector_centrality.items(), key=lambda item: item[1])}
+        sampled_anchor_nodes = list(sorted_eigenvector_centrality.keys())[:num_anchor_nodes]
+
+    if sampling_method == 'closeness_centrality':
+        G = to_networkx(data)
+        closeness_centrality = nx.closeness_centrality(G)
+        sorted_closeness_centrality = {k: v for k, v in sorted(closeness_centrality.items(), key=lambda item: item[1])}
+        sampled_anchor_nodes = list(sorted_closeness_centrality.keys())[:num_anchor_nodes]
+
+    if sampling_method == 'clustering_coefficient':
+        G = to_networkx(data)
+        clustering_coefficient = nx.clustering(G)
+        sorted_clustering_coefficient = {k: v for k, v in sorted(clustering_coefficient.items(), key=lambda item: item[1])}
+        sampled_anchor_nodes = list(sorted_clustering_coefficient.keys())[:num_anchor_nodes]
 
     return sampled_anchor_nodes
 
@@ -122,6 +152,16 @@ def process_and_save_embedding(data, num_anchor_nodes, sampling_method, run):
     embedding_tensor = torch.as_tensor(embedding_matrix)
     torch.save(embedding_tensor, save_path)
     print(f'saved embedding as embedding_{sampling_method}_{num_anchor_nodes}_run_{run}')
+
+def process_and_save_static_embedding(data, num_anchor_nodes, sampling_method):
+    save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}.pt')
+    print('sampling anchor nodes')
+    data.anchor_nodes = sample_anchor_nodes(data=data, num_anchor_nodes=num_anchor_nodes, sampling_method=sampling_method)
+    print('deriving shortest paths to anchor nodes')
+    embedding_matrix = get_simple_distance_vector(data=data)
+    embedding_tensor = torch.as_tensor(embedding_matrix)
+    torch.save(embedding_tensor, save_path)
+    print(f'saved embedding as embedding_{sampling_method}_{num_anchor_nodes}')
 
 def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run):
     load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
