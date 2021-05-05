@@ -3,71 +3,60 @@ import os.path as osp
 import os
 import random
 import numpy as np
-
+import networkx as nx
 import torch
+from torch_geometric.utils import to_networkx
+import multiprocessing as mp
+from tqdm import tqdm
+import sys
 
 from torch_geometric.datasets import Flickr
 from torch_geometric.utils import degree
 
-def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
+def sample_anchor_nodes(data, sampling_method):
     """
     Returns num_anchor_nodes amount of sampled anchor nodes based upon the sampling_method provided
     """
-    if sampling_method == 'pagerank':
-        G = to_networkx(data)
-        pagerank = nx.pagerank_scipy(G)
-        sorted_pagerank = {k: v for k, v in sorted(pagerank.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes_32 = list(sorted_pagerank.keys())[:32]
-        sampled_anchor_nodes_64 = list(sorted_pagerank.keys())[:64]
-        sampled_anchor_nodes_128 = list(sorted_pagerank.keys())[:128]
-        sampled_anchor_nodes_256 = list(sorted_pagerank.keys())[:256]
+    # if sampling_method == 'pagerank':
+    #     G = to_networkx(data)
+    #     pagerank = nx.pagerank_scipy(G)
+    #     sorted_pagerank = {k: v for k, v in sorted(pagerank.items(), key=lambda item: item[1])}
+    #     sampled_anchor_nodes_32 = list(sorted_pagerank.keys())[:32]
+    #     sampled_anchor_nodes_64 = list(sorted_pagerank.keys())[:64]
+    #     sampled_anchor_nodes_128 = list(sorted_pagerank.keys())[:128]
+    #     sampled_anchor_nodes_256 = list(sorted_pagerank.keys())[:256]
 
     if sampling_method == 'betweenness_centrality':
         G = to_networkx(data)
         betweenness_centrality = nx.betweenness_centrality(G)
         sorted_betweenness_centrality = {k: v for k, v in sorted(betweenness_centrality.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes_32 = list(sorted_betweenness_centrality.keys())[:32]
-        sampled_anchor_nodes_64 = list(sorted_betweenness_centrality.keys())[:64]
-        sampled_anchor_nodes_128 = list(sorted_betweenness_centrality.keys())[:128]
-        sampled_anchor_nodes_256 = list(sorted_betweenness_centrality.keys())[:256]
+        sampled_anchor_nodes = list(sorted_betweenness_centrality.keys())[:256]
 
     if sampling_method == 'degree_centrality':
         G = to_networkx(data)
         degree_centrality = nx.degree_centrality(G)
         sorted_degree_centrality = {k: v for k, v in sorted(degree_centrality.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes_32 = list(sorted_degree_centrality.keys())[:32]
-        sampled_anchor_nodes_64 = list(sorted_degree_centrality.keys())[:64]
-        sampled_anchor_nodes_128 = list(sorted_degree_centrality.keys())[:128]
-        sampled_anchor_nodes_256 = list(sorted_degree_centrality.keys())[:256]
+        sampled_anchor_nodes = list(sorted_degree_centrality.keys())[:256]
 
     if sampling_method == 'eigenvector_centrality':
         G = to_networkx(data)
-        eigenvector_centrality = nx.eigenvector_centrality(G)
+        eigenvector_centrality = nx.eigenvector_centrality_numpy(G)
         sorted_eigenvector_centrality = {k: v for k, v in sorted(eigenvector_centrality.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes_32 = list(sorted_eigenvector_centrality.keys())[:32]
-        sampled_anchor_nodes_64 = list(sorted_eigenvector_centrality.keys())[:64]
-        sampled_anchor_nodes_128 = list(sorted_eigenvector_centrality.keys())[:128]
-        sampled_anchor_nodes_256 = list(sorted_eigenvector_centrality.keys())[:256]
+        sampled_anchor_nodes = list(sorted_eigenvector_centrality.keys())[:256]
 
     if sampling_method == 'closeness_centrality':
         G = to_networkx(data)
         closeness_centrality = nx.closeness_centrality(G)
         sorted_closeness_centrality = {k: v for k, v in sorted(closeness_centrality.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes_32 = list(sorted_closeness_centrality.keys())[:32]
-        sampled_anchor_nodes_64 = list(sorted_closeness_centrality.keys())[:64]
-        sampled_anchor_nodes_128 = list(sorted_closeness_centrality.keys())[:128]
-        sampled_anchor_nodes_256 = list(sorted_closeness_centrality.keys())[:256]
+        sampled_anchor_nodes = list(sorted_closeness_centrality.keys())[:256]
 
     if sampling_method == 'clustering_coefficient':
         G = to_networkx(data)
         clustering_coefficient = nx.clustering(G)
         sorted_clustering_coefficient = {k: v for k, v in sorted(clustering_coefficient.items(), key=lambda item: item[1])}
-        sampled_anchor_nodes_32 = list(sorted_clustering_coefficient.keys())[:32]
-        sampled_anchor_nodes_64 = list(sorted_clustering_coefficient.keys())[:64]
-        sampled_anchor_nodes_128 = list(sorted_clustering_coefficient.keys())[:128]
-        sampled_anchor_nodes_256 = list(sorted_clustering_coefficient.keys())[:256]
+        sampled_anchor_nodes = list(sorted_clustering_coefficient.keys())[:256]
 
-    return sampled_anchor_nodes_32, sampled_anchor_nodes_64, sampled_anchor_nodes_128, sampled_anchor_nodes_256
+    return sampled_anchor_nodes
 
 def shortest_path_length(G, anchor_nodes, partition_length):
     """
@@ -97,7 +86,7 @@ def merge_dicts(dicts):
         result.update(dictionary)
     return result
 
-def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=4):
+def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=6):
     """
     Distribute shortest path calculation jobs to async workers, merge dicts and return results
     """
@@ -133,15 +122,16 @@ def get_simple_distance_vector(data, anchor_nodes):
     return distance_embedding
 
 
-def process_and_save_static_embedding(data, num_anchor_nodes, sampling_method):
+def process_and_save_static_embedding(data, sampling_method):
     print('sampling anchor nodes')
-    data.anchor_nodes_32, data.anchor_nodes_64, data.anchor_nodes_128, data.anchor_nodes_256 = sample_anchor_nodes(data=data, num_anchor_nodes=num_anchor_nodes, sampling_method=sampling_method)
+    anchor_nodes = sample_anchor_nodes(data=data, sampling_method=sampling_method)
+    embedding_matrix = get_simple_distance_vector(data=data, anchor_nodes=anchor_nodes)
+    embedding_tensor = torch.as_tensor(embedding_matrix)
     print('deriving shortest paths to anchor nodes')
-    for i in [data.anchor_nodes_32, data.anchor_nodes_64, data.anchor_nodes_128, data.anchor_nodes_256]:
-        save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{i}.pt')
-        embedding_matrix = get_simple_distance_vector(data=data, i)
-        embedding_tensor = torch.as_tensor(embedding_matrix)
-        torch.save(embedding_tensor, save_path)
+    for num_anchor_nodes in [32, 64, 128, 256]:
+        save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}.pt')
+        embedding = embedding_tensor[:, :num_anchor_nodes]
+        torch.save(embedding, save_path)
         print(f'saved embedding as embedding_{sampling_method}_{num_anchor_nodes}')
 
 
@@ -154,9 +144,9 @@ data = dataset[0]
 row, col = data.edge_index
 data.edge_weight = 1. / degree(col, data.num_nodes)[col]  # Norm by in-degree.
 
-sampling_methods_list = ['pagerank', 'degree_centrality', 'eigenvector_centrality', 'closeness_centrality', 'clustering_coefficient', 'betweenness_centrality']
+sampling_methods_list = ['eigenvector_centrality', 'closeness_centrality', 'clustering_coefficient', 'betweenness_centrality']
 for sampling_method in sampling_methods_list:
-    process_and_save_static_embedding(data=data, num_anchor_nodes=num_anchor_nodes, sampling_method=sampling_method)
+    process_and_save_static_embedding(data=data, sampling_method=sampling_method)
 
 
 

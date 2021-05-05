@@ -35,7 +35,7 @@ def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
 
     if sampling_method == 'eigenvector_centrality':
         G = to_networkx(data)
-        eigenvector_centrality = nx.eigenvector_centrality(G)
+        eigenvector_centrality = nx.eigenvector_centrality_numpy(G)
         sorted_eigenvector_centrality = {k: v for k, v in sorted(eigenvector_centrality.items(), key=lambda item: item[1])}
         sampled_anchor_nodes = list(sorted_eigenvector_centrality.keys())[:num_anchor_nodes]
 
@@ -142,6 +142,14 @@ def attach_distance_embedding(data, num_anchor_nodes, sampling_method, caching=F
         extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
         data.x = extended_features
         print('feature matrix is blessed by the POPE')
+
+def attach_deterministic_distance_embedding(data, num_anchor_nodes, sampling_method):
+        loading_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}.pt')
+        print('loading cached distance embeddings')
+        embedding_tensor = torch.load(loading_path)
+        extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+        print('feature matrix is blessed by the POPE')
+        return extended_features
 
 def process_and_save_embedding(data, num_anchor_nodes, sampling_method, run):
     save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
