@@ -135,7 +135,7 @@ def main():
     datamodule = Reddit('data/Reddit')
     model = GraphSAGE(datamodule.num_features, datamodule.num_classes)
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
-    trainer = Trainer(gpus=[1], max_epochs=1, callbacks=[checkpoint_callback, EarlyStopping(monitor='train_loss')],
+    trainer = Trainer(gpus=1, max_epochs=1, callbacks=[checkpoint_callback],# EarlyStopping(monitor='train_acc')],
                         gradient_clip_val=0.5, stochastic_weight_avg=True)
     # trainer = Trainer(gpus=1, max_epochs=10, callbacks=[checkpoint_callback, EarlyStopping(monitor='train_loss')],
     #                     gradient_clip_val=0.5, stochastic_weight_avg=True, fast_dev_run=True)
