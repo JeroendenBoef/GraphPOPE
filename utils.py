@@ -171,10 +171,10 @@ def process_and_save_static_embedding(data, num_anchor_nodes, sampling_method):
     torch.save(embedding_tensor, save_path)
     print(f'saved embedding as embedding_{sampling_method}_{num_anchor_nodes}')
 
-def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run):
+def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run=4):
     load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
     print('loading preprocessed embedding tensor...')
     embedding_tensor = torch.load(load_path)
     extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
-    data.x = extended_features
     print('attached preprocessed embedding')
+    return extended_features

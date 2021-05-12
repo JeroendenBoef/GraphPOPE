@@ -26,7 +26,7 @@ from torch_geometric.datasets import Flickr as PyGFlickr
 from torch_geometric.data import NeighborSampler
 
 import wandb
-from utils import attach_deterministic_distance_embedding
+from utils import attach_deterministic_distance_embedding, load_preprocessed_embedding
 
 parser = argparse.ArgumentParser(description='Flickr POPE GraphSAGE Pytorch Lightning')
 parser.add_argument('--dropout', type=float, default=0.5)
@@ -75,9 +75,12 @@ class Flickr(LightningDataModule):
         self.data = PyGFlickr(self.data_dir)[0]
         row, col = self.data.edge_index
         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
-        if args.sampling_method != 'baseline':
+        if (args.sampling_method != 'baseline') and (args.sampling_method != 'stochastic'):
             self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
-        
+        if args.sampling_method == 'stochastic':
+            self.data.x = load_preprocessed_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method, run=4)
+
+
     def train_dataloader(self):
         return NeighborSampler(self.data.adj_t, node_idx=self.data.train_mask, sizes=[25, 10], 
                                 return_e_id=False, transform=self.convert_batch, 

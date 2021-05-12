@@ -10,11 +10,13 @@ from torch import Tensor
 import torch.nn.functional as F
 from torch_sparse import SparseTensor
 from torch.nn import ModuleList, BatchNorm1d
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import pytorch_lightning as pl
 from pytorch_lightning.metrics import Accuracy
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer, seed_everything
 
 import torch_geometric.transforms as T
@@ -28,10 +30,10 @@ from utils import attach_deterministic_distance_embedding
 
 parser = argparse.ArgumentParser(description='Flickr Pytorch Lightning GraphSAINT')
 parser.add_argument('--dropout', type=float, default=0.5)
-parser.add_argument('--lr', type=float, default=0.01)
+parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--num_layers', type=int, default=3)
 parser.add_argument('--hidden_layer_size', type=int, default=256)
-parser.add_argument('--batch_size', type=int, default=2048)
+parser.add_argument('--batch_size', type=int, default=1000)
 parser.add_argument('--walk_length', type=int, default=3)
 parser.add_argument('--num_steps', type=int, default=30)
 parser.add_argument('--epochs', type=int, default=30)
@@ -77,22 +79,22 @@ class Flickr(LightningDataModule):
         row, col = self.data.edge_index
         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
         #self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
-        train_index, train_weight = subgraph(self.data.train_mask, self.data.edge_index, self.data.edge_weight, relabel_nodes=True) #sample subgraph for graphsaint loader, relabel nodes
-        self.train_data = Data(edge_index=train_index, edge_weight=train_weight, x=self.data.x[self.data.train_mask], y=self.data.y[self.data.train_mask])
+        # train_index, train_weight = subgraph(self.data.train_mask, self.data.edge_index, self.data.edge_weight, relabel_nodes=True) #sample subgraph for graphsaint loader, relabel nodes
+        # self.train_data = Data(edge_index=train_index, edge_weight=train_weight, x=self.data.x[self.data.train_mask], y=self.data.y[self.data.train_mask])
         
     #uncomment for graphsaint
-    def train_dataloader(self):
-        return GraphSAINTRandomWalkSampler(self.train_data, batch_size=self.batch_size, walk_length=args.walk_length,
-                                    num_steps=args.num_steps, sample_coverage=0,
-                                    num_workers=args.num_workers, worker_init_fn=seed_worker,
-                                    save_dir=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr-normalization'))
+    # def train_dataloader(self):
+    #     return GraphSAINTRandomWalkSampler(self.train_data, batch_size=self.batch_size, walk_length=args.walk_length,
+    #                                 num_steps=args.num_steps, sample_coverage=0,
+    #                                 num_workers=args.num_workers, worker_init_fn=seed_worker,
+    #                                 save_dir=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr-normalization'))
     
     #uncomment for sage
-    # def train_dataloader(self):
-    #     return NeighborSampler(self.data.adj_t, node_idx=self.data.train_mask, sizes=[25, 10], 
-    #                             return_e_id=False, transform=self.convert_batch, 
-    #                             batch_size=self.batch_size, shuffle=True, num_workers=args.num_workers,
-    #                             worker_init_fn=seed_worker, persistent_workers=True)
+    def train_dataloader(self):
+        return NeighborSampler(self.data.adj_t, node_idx=self.data.train_mask, sizes=[25, 10], 
+                                return_e_id=False, transform=self.convert_batch, 
+                                batch_size=self.batch_size, shuffle=True, num_workers=args.num_workers,
+                                worker_init_fn=seed_worker, persistent_workers=True)
 
     def val_dataloader(self):
         return NeighborSampler(self.data.adj_t, node_idx=self.data.val_mask, sizes=[25, 10], 
@@ -118,10 +120,11 @@ class Flickr(LightningDataModule):
 class SaintGCN(LightningModule):
     def __init__(self, in_channels: int, out_channels: int,
                  hidden_channels: int, num_layers: int,
-                 dropout: float = 0.5):
+                 dropout: float = 0.5, learnin_rate = args.lr, batch_size = args.batch_size):
         super().__init__()
         self.save_hyperparameters()
         self.dropout = dropout
+        self.batch_size = batch_size
 
         self.convs = ModuleList()
         self.convs.append(SAGEConv(in_channels, hidden_channels))
@@ -133,9 +136,9 @@ class SaintGCN(LightningModule):
         for _ in range(num_layers - 1):
             self.bns.append(BatchNorm1d(hidden_channels))
         
-        self.train_acc = Accuracy().clone()
-        self.val_acc = Accuracy().clone()
-        self.test_acc = Accuracy().clone()
+        self.train_acc = Accuracy()
+        self.val_acc = Accuracy()
+        self.test_acc = Accuracy()
 
     def forward(self, x, edge_index, edge_weight=None):
         #training loop on edge index long tensors   
@@ -160,15 +163,15 @@ class SaintGCN(LightningModule):
 
     def training_step(self, batch, batch_idx: int):
         #uncomment for sage
-        # x, y, adjs_t = batch
-        # y_hat = self(x, adjs_t)
-        # train_loss = F.cross_entropy(y_hat, y)
-        # train_acc = self.train_acc(y_hat.softmax(dim=-1), y)
+        x, y, adjs_t = batch
+        y_hat = self(x, adjs_t)
+        train_loss = F.cross_entropy(y_hat, y)
+        train_acc = self.train_acc(y_hat.softmax(dim=-1), y)
         
         #uncomment for saint
-        y_hat = self(batch.x, batch.edge_index)
-        train_loss = F.cross_entropy(y_hat, batch.y)
-        train_acc = self.train_acc(y_hat.softmax(dim=-1), batch.y)
+        # y_hat = self(batch.x, batch.edge_index)
+        # train_loss = F.cross_entropy(y_hat, batch.y)
+        # train_acc = self.train_acc(y_hat.softmax(dim=-1), batch.y)
         self.log('train_acc', train_acc, prog_bar=True, on_step=False,
                  on_epoch=True)
         self.log('train_loss', train_loss, prog_bar=True, on_step=False,
@@ -178,7 +181,9 @@ class SaintGCN(LightningModule):
     def validation_step(self, batch, batch_idx: int):
         x, y, edge_index = batch
         y_hat = self(x, edge_index)
+        #y_hat = torch.ones(y_hat.shape).cuda() * 6 
         val_loss = F.cross_entropy(y_hat, y)
+        #y_hat_sm = y_hat.softmax(dim=-1)
         val_acc = self.val_acc(y_hat.softmax(dim=-1), y)
         self.log('val_acc', val_acc, prog_bar=True, on_step=False,
                  on_epoch=True)
@@ -195,7 +200,19 @@ class SaintGCN(LightningModule):
         return test_acc
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=args.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=args.lr)
+        lr_dict =  {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': ReduceLROnPlateau(optimizer), 
+                'interval': 'epoch',
+                'frequency': 1,
+                'monitor': 'val_loss',
+                'strict': True
+            }
+        }
+        return lr_dict
+
 
 def main():
     wandb_logger = WandbLogger(name=f'{args.sampling_method}-{args.num_anchor_nodes}',project='GraphPOPE-Flickr-new')
@@ -203,22 +220,22 @@ def main():
     path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr')
     datamodule = Flickr(path, batch_size=args.batch_size, num_anchor_nodes=args.num_anchor_nodes)
     model = SaintGCN(in_channels=datamodule.num_features, out_channels=datamodule.num_classes, hidden_channels=args.hidden_layer_size, num_layers=args.num_layers)
-    checkpoint_callback = ModelCheckpoint(monitor='train_loss', mode='min', save_top_k=2, dirpath=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint'))
-    #checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
-    trainer = Trainer(gpus=1, max_epochs=10, callbacks=[checkpoint_callback, pl.callbacks.early_stopping.EarlyStopping(monitor='train_loss')],
-                        gradient_clip_val=0.5, stochastic_weight_avg=True)
+    #checkpoint_callback = ModelCheckpoint(monitor='train_loss', mode='min', save_top_k=2, dirpath=osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint'))
+    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
+    # trainer = Trainer(gpus=1, max_epochs=1, callbacks=[checkpoint_callback, pl.callbacks.early_stopping.EarlyStopping(monitor='train_loss')],
+    #                     gradient_clip_val=0.5, stochastic_weight_avg=True)
     # trainer = Trainer(gpus=[0], max_epochs=args.epochs, fast_dev_run=True,
     #                 callbacks=[checkpoint_callback, pl.callbacks.early_stopping.EarlyStopping(monitor='train_loss')], logger=wandb_logger,
     #                 gradient_clip_val=0.5, stochastic_weight_avg=True)
 
     # Uncomment to train on multiple GPUs:
-    # trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=args.epochs,
-    #                 callbacks=[checkpoint_callback, pl.callbacks.early_stopping.EarlyStopping(monitor='train_loss')], logger=wandb_logger,
-    #                 gradient_clip_val=0.5, stochastic_weight_avg=True)
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=200, logger=wandb_logger,
+                    callbacks=[checkpoint_callback, lr_monitor], gradient_clip_val=0.5)
 
     trainer.fit(model, datamodule=datamodule)
-    trainer.test(model)
-
+    trainer.test()
+    print('yeet')
 
 if __name__ == "__main__":
     main()
