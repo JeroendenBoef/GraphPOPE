@@ -1,5 +1,6 @@
 import numpy as np
 import networkx as nx
+import graph_tool.all as gt
 import torch
 from torch_geometric.utils import to_networkx
 import multiprocessing as mp
@@ -72,6 +73,21 @@ def shortest_path_length(G, anchor_nodes, partition_length):
         #dists_dict[node] = nx.single_source_shortest_path_length(G, node)
     return dists_dict
 
+def shortest_path_length_gt(G, anchor_nodes, partition_length):
+    """
+    Calculate shortest path distance to every sampled anchor node and normalize by 1/distance. No path = 0
+    """
+    dists_dict = {}
+    for node in partition_length:
+        distances = []
+        for anchor_node in anchor_nodes:
+            dist = gt.shortest_distance(G, source=G.vertex(node), target=G.vertex(anchor_node), max_dist=20)
+            dist = 0 if dist >19 else dist = 1/dist #normalize
+            distances.append(dist)
+        dists_dict[node] = distances.copy()
+    return dists_dict
+
+
 def merge_dicts(dicts):
     """
     Helper function for parallel shortest path calculation. Merges dicts from jobs into one
@@ -105,14 +121,42 @@ def all_pairs_shortest_path_length_parallel(G, anchor_nodes, num_workers=4):
         print('workers terminated!')
         sys.exit(1)
 
-def get_simple_distance_vector(data):
+def shortest_path_gt(G, anchor_nodes, num_workers=4):
+    """
+    Distribute shortest path calculation jobs to async workers, merge dicts and return results
+    """
+    try:
+        nodes = list(G.nodes)
+        pool = mp.Pool(processes=num_workers)
+        jobs = [pool.apply_async(shortest_path_length_gt,
+                args=(G, anchor_nodes, nodes[int(len(nodes)/num_workers*i):int(len(nodes)/num_workers*(i+1))])) for i in range(num_workers)]
+        output = []
+        for job in tqdm(jobs):
+            output.append(job.get())
+        dists_dict = merge_dicts(output)
+        pool.close()
+        pool.join()
+        return dists_dict
+    
+    except KeyboardInterrupt:
+        print('terminating workers...')
+        pool.terminate()
+        pool.join()
+        print('workers terminated!')
+        sys.exit(1)
+
+def get_simple_distance_vector(data, framework):
     """
     Calculate normalized distance vector for all nodes in given graph G. Calculation is performed using networkx shortest path length and   normalization is performed trough 1/distance.
     """
     distance_embedding = []
     G = to_networkx(data)
 
-    dist_dict = all_pairs_shortest_path_length_parallel(G, data.anchor_nodes)
+    if framework = 'nx':
+        dist_dict = all_pairs_shortest_path_length_parallel(G, data.anchor_nodes)
+    if framework = 'gt':
+        dist_dict = shortest_path_gt(G, data.anchor_nodes)
+
     distance_embedding = torch.as_tensor(list(dist_dict.values()))
     return distance_embedding
 
