@@ -2,6 +2,7 @@ import numpy as np
 import networkx as nx
 import graph_tool.all as gt
 import torch
+from torch.nn import CosineSimilarity
 from torch_geometric.utils import to_networkx
 import multiprocessing as mp
 from tqdm import tqdm
@@ -82,7 +83,7 @@ def shortest_path_length_gt(G, anchor_nodes, partition_length):
         distances = []
         for anchor_node in anchor_nodes:
             dist = gt.shortest_distance(G, source=G.vertex(node), target=G.vertex(anchor_node), max_dist=20)
-            dist = 0 if dist >19 else dist = 1/dist #normalize
+            dist = 0 if distance > 0 else 1/dist
             distances.append(dist)
         dists_dict[node] = distances.copy()
     return dists_dict
@@ -152,9 +153,9 @@ def get_simple_distance_vector(data, framework):
     distance_embedding = []
     G = to_networkx(data)
 
-    if framework = 'nx':
+    if framework == 'nx':
         dist_dict = all_pairs_shortest_path_length_parallel(G, data.anchor_nodes)
-    if framework = 'gt':
+    if framework == 'gt':
         dist_dict = shortest_path_gt(G, data.anchor_nodes)
 
     distance_embedding = torch.as_tensor(list(dist_dict.values()))
@@ -188,12 +189,12 @@ def attach_distance_embedding(data, num_anchor_nodes, sampling_method, caching=F
         print('feature matrix is blessed by the POPE')
 
 def attach_deterministic_distance_embedding(data, num_anchor_nodes, sampling_method):
-        loading_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}.pt')
-        print('loading cached distance embeddings')
-        embedding_tensor = torch.load(loading_path)
-        extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
-        print('feature matrix is blessed by the POPE')
-        return extended_features
+    loading_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}.pt')
+    print('loading cached distance embeddings')
+    embedding_tensor = torch.load(loading_path)
+    extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    print('feature matrix is blessed by the POPE')
+    return extended_features
 
 def process_and_save_embedding(data, num_anchor_nodes, sampling_method, run):
     save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
@@ -221,4 +222,71 @@ def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run=4):
     embedding_tensor = torch.load(load_path)
     extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
     print('attached preprocessed embedding')
+    return extended_features
+
+#similarity based feature embedding
+def Cosine(data, num_anchor_nodes, seed):
+    cos = CosineSimilarity(dim=0)
+    anchor_nodes = sample_anchor_nodes(data, num_anchor_nodes, sampling_method='stochastic')
+    anchor_features = [data.x[anchor_node] for anchor_node in anchor_nodes]
+    feature_matrix = [vector for vector in data.x]
+    embedding_out = [[cos(feature_vector, anchor_vector) for anchor_vector in anchor_features] for feature_vector in feature_matrix]
+    embedding_out = torch.as_tensor(embedding_out)
+    save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'cosine_{num_anchor_nodes}_seed_{seed}.pt')
+    torch.save(embedding_out, save_path)
+    print('Cached embedding saved!')
+    return embedding_out
+
+def Euclidean(data, num_anchor_nodes, seed):
+    anchor_nodes = sample_anchor_nodes(data, num_anchor_nodes, sampling_method='stochastic')
+    load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', 'node2vec.pt')
+    node2vec_embeddings = torch.load(load_path).cpu()
+    anchor_embeddings = [node2vec_embeddings[index] for index in anchor_nodes]
+    embedding_out = [[1/torch.dist(base_embedding, anchor_embedding) for anchor_embedding in anchor_embeddings] for base_embedding in node2vec_embeddings]
+    embedding_out = torch.as_tensor(embedding_out)
+    save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'euclidean_{num_anchor_nodes}_seed_{seed}.pt')
+    torch.save(embedding_out, save_path)
+    print('Cached embedding saved!')
+    return embedding_out
+
+def attach_alternative_embedding(data, num_anchor_nodes, embedding_method, seed, caching=True):
+    if embedding_method == 'cosine':
+        if caching == True:
+            load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'cosine_{num_anchor_nodes}_seed_{seed}.pt')
+            if osp.isfile(load_path) == True:
+                print('Found cached cosine embedding!')
+                embedding_tensor = torch.load(load_path)
+                extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+            else:
+                print('No cosine embedding found, deriving cosine embedding...')
+                embedding_matrix = Cosine(data, num_anchor_nodes, seed)
+                embedding_tensor = torch.as_tensor(embedding_matrix)
+                extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+
+        else:
+            print('Deriving cosine embedding...')
+            embedding_matrix = Cosine(data, num_anchor_nodes, seed)
+            embedding_tensor = torch.as_tensor(embedding_matrix)
+            extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+        
+    if embedding_method == 'euclidean':
+        if caching == True:
+            load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'euclidean_{num_anchor_nodes}_seed_{seed}.pt')
+            if osp.isfile(load_path) == True:
+                print('Found cached euclidean embedding!')
+                embedding_tensor = torch.load(load_path)
+                extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+            else:
+                print('No euclidean embedding found, deriving euclidean embedding...')
+                embedding_matrix = Euclidean(data, num_anchor_nodes, seed)
+                embedding_tensor = torch.as_tensor(embedding_matrix)
+                extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+
+        else:
+            print('Deriving euclidean embedding...')
+            embedding_matrix = Euclidean(data, num_anchor_nodes, seed)
+            embedding_tensor = torch.as_tensor(embedding_matrix)
+            extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+
+    print('feature matrix is blessed by the POPE', '\n', f'feature matrix shape: {extended_features.shape}')
     return extended_features

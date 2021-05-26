@@ -22,24 +22,23 @@ from pytorch_lightning import LightningDataModule, LightningModule, Trainer, see
 import torch_geometric.transforms as T
 from torch_geometric.nn import SAGEConv
 from torch_geometric.utils import degree
-from torch_geometric.datasets import Flickr as PyGFlickr
+from ogb.nodeproppred import PygNodePropPredDataset
 from torch_geometric.data import NeighborSampler
 
 import wandb
 from utils import attach_alternative_embedding, attach_deterministic_distance_embedding, load_preprocessed_embedding
 
-parser = argparse.ArgumentParser(description='Flickr POPE GraphSAGE Pytorch Lightning')
+parser = argparse.ArgumentParser(description='OGB-products SAGEPOPE')
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--num_layers', type=int, default=3)
 parser.add_argument('--hidden_layer_size', type=int, default=256)
 parser.add_argument('--batch_size', type=int, default=4000)
-parser.add_argument('--epochs', type=int, default=300)
+parser.add_argument('--epochs', type=int, default=400)
 parser.add_argument('--num_workers', type=int, default=6)
 parser.add_argument('--num_anchor_nodes', type=int, default=0)
 parser.add_argument('--sampling_method', type=str, default='stochastic')
 parser.add_argument('--embedding_method', type=str, default='euclidean')
-parser.add_argument('--seed', type=int, default=42)
 args = parser.parse_args()
 print(args)
 
@@ -53,7 +52,7 @@ class Batch(NamedTuple):
     y: Tensor
     adjs_t: List[SparseTensor]
 
-class Flickr(LightningDataModule):
+class Products(LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int, num_anchor_nodes: int,
                  in_memory: bool = False):
         super().__init__()
@@ -64,25 +63,24 @@ class Flickr(LightningDataModule):
 
     @property
     def num_features(self) -> int:
-        return int(500 + self.num_anchor_nodes)
+        return int(100 + self.num_anchor_nodes)
 
     @property
     def num_classes(self) -> int:
-        return 7
+        return 47
 
     def prepare_data(self):
-        PyGFlickr(self.data_dir, pre_transform=self.transform)
+        PygNodePropPredDataset(self.data_dir, name='ogbn-products', pre_transform=self.transform)
 
     def setup(self, stage: Optional[str] = None):
-        self.data = PyGFlickr(self.data_dir)[0]
-        row, col = self.data.edge_index
-        self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
+        self.data = PygNodePropPredDataset(self.data_dir, name='ogbn-products')[0]
         if args.embedding_method != 'geodesic':
-            self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, embedding_method=args.embedding_method, seed=args.seed, caching=False)
+            self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method, embedding_method=args.embedding_method)
         elif (args.sampling_method != 'baseline') and (args.sampling_method != 'stochastic'):
             self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
         elif args.sampling_method == 'stochastic':
             self.data.x = load_preprocessed_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method, run=4)
+
 
     def train_dataloader(self):
         return NeighborSampler(self.data.adj_t, node_idx=self.data.train_mask, sizes=[25, 10], 
@@ -186,11 +184,11 @@ class SAGE(LightningModule):
 
 
 def main():
-    wandb_logger = WandbLogger(name=f'{args.embedding_method}-{args.num_anchor_nodes}',project='GraphPOPE-sage-flickr-2')
-    seed_everything(args.seed)
-    path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr')
-    checkpoint_path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint')
-    datamodule = Flickr(path, batch_size=args.batch_size, num_anchor_nodes=args.num_anchor_nodes)
+    wandb_logger = WandbLogger(name=f'{args.embedding_method}-{args.num_anchor_nodes}',project='GraphPOPE-sage-products')
+    seed_everything(42)
+    path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'products')
+    checkpoint_path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'products_checkpoint')
+    datamodule = Products(path, batch_size=args.batch_size, num_anchor_nodes=args.num_anchor_nodes)
     model = SAGE(in_channels=datamodule.num_features, out_channels=datamodule.num_classes, hidden_channels=args.hidden_layer_size, num_layers=args.num_layers)
     
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1, dirpath=checkpoint_path)
