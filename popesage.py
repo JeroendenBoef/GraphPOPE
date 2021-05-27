@@ -36,7 +36,7 @@ parser.add_argument('--hidden_layer_size', type=int, default=256)
 parser.add_argument('--batch_size', type=int, default=4000)
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--num_workers', type=int, default=6)
-parser.add_argument('--num_anchor_nodes', type=int, default=0)
+parser.add_argument('--num_anchor_nodes', type=int, default=256)
 parser.add_argument('--sampling_method', type=str, default='stochastic')
 parser.add_argument('--embedding_method', type=str, default='euclidean')
 parser.add_argument('--seed', type=int, default=42)
@@ -79,6 +79,7 @@ class Flickr(LightningDataModule):
         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
         if args.embedding_method != 'geodesic':
             self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, embedding_method=args.embedding_method, seed=args.seed, caching=False)
+            print(f'feature matrix shape: {self.data.x.shape}')
         elif (args.sampling_method != 'baseline') and (args.sampling_method != 'stochastic'):
             self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
         elif args.sampling_method == 'stochastic':
@@ -186,7 +187,7 @@ class SAGE(LightningModule):
 
 
 def main():
-    wandb_logger = WandbLogger(name=f'{args.embedding_method}-{args.num_anchor_nodes}',project='GraphPOPE-sage-flickr-2')
+    wandb_logger = WandbLogger(name=f'{args.embedding_method}-norm-{args.num_anchor_nodes}',project='GraphPOPE-sage-flickr-2')
     seed_everything(args.seed)
     path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr')
     checkpoint_path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint')
