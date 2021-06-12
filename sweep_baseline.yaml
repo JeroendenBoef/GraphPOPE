@@ -1,6 +1,6 @@
 program: sweep.py
 method: bayes
-name: graphpope-closeness_centrality
+name: graphpope-baseline
 metric:
   name: val_acc
   goal: maximize
@@ -14,10 +14,3 @@ parameters:
     values:
       - 2
       - 3
-  num_anchor_nodes:
-    distribution: categorical
-    values:
-      - 32
-      - 64
-      - 128
-      - 256

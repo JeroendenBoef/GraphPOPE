@@ -12,6 +12,7 @@ from torch_sparse import SparseTensor
 from torch.nn import ModuleList, BatchNorm1d
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+#import torchmetrics
 import pytorch_lightning as pl
 from pytorch_lightning.metrics import Accuracy
 from pytorch_lightning.loggers import WandbLogger
@@ -25,20 +26,20 @@ from torch_geometric.utils import degree
 from torch_geometric.datasets import Flickr as PyGFlickr
 from torch_geometric.data import NeighborSampler
 
-import wandb
-from utils import attach_alternative_embedding, attach_deterministic_distance_embedding, load_preprocessed_embedding
+#from utils import attach_alternative_embedding, attach_deterministic_distance_embedding, load_preprocessed_embedding
+from utils import attach_n2v, attach_deterministic_distance_embedding
 
 parser = argparse.ArgumentParser(description='Flickr POPE GraphSAGE Pytorch Lightning')
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--lr', type=float, default=0.001)
-parser.add_argument('--num_layers', type=int, default=3)
+parser.add_argument('--num_layers', type=int, default=2)
 parser.add_argument('--hidden_layer_size', type=int, default=256)
-parser.add_argument('--batch_size', type=int, default=4000)
+parser.add_argument('--batch_size', type=int, default=2550)
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--num_workers', type=int, default=6)
 parser.add_argument('--num_anchor_nodes', type=int, default=256)
-parser.add_argument('--sampling_method', type=str, default='stochastic')
-parser.add_argument('--embedding_method', type=str, default='euclidean')
+parser.add_argument('--sampling_method', type=str, default='closeness_centrality')
+parser.add_argument('--embedding_method', type=str, default='geodesic')
 parser.add_argument('--seed', type=int, default=42)
 args = parser.parse_args()
 print(args)
@@ -64,6 +65,7 @@ class Flickr(LightningDataModule):
 
     @property
     def num_features(self) -> int:
+        # return 500
         return int(500 + self.num_anchor_nodes)
 
     @property
@@ -77,13 +79,16 @@ class Flickr(LightningDataModule):
         self.data = PyGFlickr(self.data_dir)[0]
         row, col = self.data.edge_index
         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
-        if args.embedding_method != 'geodesic':
-            self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, embedding_method=args.embedding_method, seed=args.seed, caching=False)
-            print(f'feature matrix shape: {self.data.x.shape}')
-        elif (args.sampling_method != 'baseline') and (args.sampling_method != 'stochastic'):
-            self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
-        elif args.sampling_method == 'stochastic':
-            self.data.x = load_preprocessed_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method, run=4)
+        self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
+        #self.data.x = attach_n2v(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
+        #print(self.data)
+        # self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=256, embedding_method='euclidean', seed=42, caching=True)
+        # if args.embedding_method != 'geodesic':
+        #     self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, embedding_method=args.embedding_method, seed=args.seed, caching=False)
+        #elif (args.sampling_method != 'baseline') and (args.sampling_method != 'stochastic'):
+            # self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
+        # elif args.sampling_method == 'stochastic':
+        #     self.data.x = load_preprocessed_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method, run=4)
 
     def train_dataloader(self):
         return NeighborSampler(self.data.adj_t, node_idx=self.data.train_mask, sizes=[25, 10], 
@@ -93,7 +98,7 @@ class Flickr(LightningDataModule):
 
     def val_dataloader(self):
         return NeighborSampler(self.data.adj_t, node_idx=self.data.val_mask, sizes=[25, 10], 
-                                transform=self.convert_batch, return_e_id=False,
+                                return_e_id=False, transform=self.convert_batch, 
                                 batch_size=self.batch_size, num_workers=args.num_workers, 
                                 worker_init_fn=seed_worker, persistent_workers=True)
     
@@ -109,6 +114,67 @@ class Flickr(LightningDataModule):
             y=self.data.y[n_id[:batch_size]],
             adjs_t=[adj_t for adj_t, _, _ in adjs],
         )
+
+# class Cora(LightningDataModule):
+#     def __init__(self, data_dir: str, batch_size: int, num_anchor_nodes: int,
+#                  in_memory: bool = False):
+#         super().__init__()
+#         self.data_dir = data_dir
+#         self.batch_size = batch_size
+#         self.num_anchor_nodes = num_anchor_nodes
+#         self.transform = T.ToSparseTensor(remove_edge_index=False)
+
+#     @property
+#     def num_features(self) -> int:
+#         # return 500
+#         return int(500 + self.num_anchor_nodes)
+
+#     @property
+#     def num_classes(self) -> int:
+#         return 7
+
+#     def prepare_data(self):
+#         PyGFlickr(self.data_dir, pre_transform=self.transform)
+
+#     def setup(self, stage: Optional[str] = None):
+#         self.data = PyGFlickr(self.data_dir)[0]
+#         row, col = self.data.edge_index
+#         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
+#         #self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
+#         self.data.x = attach_n2v(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
+#         #print(self.data)
+#         # self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=256, embedding_method='euclidean', seed=42, caching=True)
+#         # if args.embedding_method != 'geodesic':
+#         #     self.data.x = attach_alternative_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, embedding_method=args.embedding_method, seed=args.seed, caching=False)
+#         #elif (args.sampling_method != 'baseline') and (args.sampling_method != 'stochastic'):
+#             # self.data.x = attach_deterministic_distance_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method)
+#         # elif args.sampling_method == 'stochastic':
+#         #     self.data.x = load_preprocessed_embedding(data=self.data, num_anchor_nodes=self.num_anchor_nodes, sampling_method=args.sampling_method, run=4)
+
+#     def train_dataloader(self):
+#         return NeighborSampler(self.data.adj_t, node_idx=self.data.train_mask, sizes=[25, 10], 
+#                                 return_e_id=False, transform=self.convert_batch, 
+#                                 batch_size=self.batch_size, shuffle=True, num_workers=args.num_workers,
+#                                 worker_init_fn=seed_worker, persistent_workers=True)
+
+#     def val_dataloader(self):
+#         return NeighborSampler(self.data.adj_t, node_idx=self.data.val_mask, sizes=[25, 10], 
+#                                 return_e_id=False, transform=self.convert_batch, 
+#                                 batch_size=self.batch_size, num_workers=args.num_workers, 
+#                                 worker_init_fn=seed_worker, persistent_workers=True)
+    
+#     def test_dataloader(self):
+#         return NeighborSampler(self.data.adj_t, node_idx=self.data.test_mask, sizes=[25, 10], 
+#                                 transform=self.convert_batch, return_e_id=False,
+#                                 batch_size=self.batch_size, num_workers=args.num_workers, 
+#                                 worker_init_fn=seed_worker, persistent_workers=True)
+
+#     def convert_batch(self, batch_size, n_id, adjs):
+#         return Batch(
+#             x=self.data.x[n_id],
+#             y=self.data.y[n_id[:batch_size]],
+#             adjs_t=[adj_t for adj_t, _, _ in adjs],
+#         )
 
 class SAGE(LightningModule):
     def __init__(self, in_channels: int, out_channels: int,
@@ -153,8 +219,8 @@ class SAGE(LightningModule):
         return train_loss
 
     def validation_step(self, batch, batch_idx: int):
-        x, y, edge_index = batch
-        y_hat = self(x, edge_index)
+        x, y, adjs_t = batch
+        y_hat = self(x, adjs_t)
         val_loss = F.cross_entropy(y_hat, y)
         val_acc = self.val_acc(y_hat.softmax(dim=-1), y)
         self.log('val_acc', val_acc, prog_bar=True, on_step=False,
@@ -164,8 +230,8 @@ class SAGE(LightningModule):
         return val_acc
 
     def test_step(self, batch, batch_idx: int):
-        x, y, edge_index = batch
-        y_hat = self(x, edge_index)
+        x, y, adjs_t = batch
+        y_hat = self(x, adjs_t)
         test_acc = self.test_acc(y_hat.softmax(dim=-1), y)
         self.log('test_acc', test_acc, prog_bar=True, on_step=False,
                  on_epoch=True)
@@ -187,18 +253,33 @@ class SAGE(LightningModule):
 
 
 def main():
-    wandb_logger = WandbLogger(name=f'{args.embedding_method}-norm-{args.num_anchor_nodes}',project='GraphPOPE-sage-flickr-2')
+    # Seed
     seed_everything(args.seed)
+
+    # Data pipeline
     path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'Flickr')
-    checkpoint_path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint')
     datamodule = Flickr(path, batch_size=args.batch_size, num_anchor_nodes=args.num_anchor_nodes)
+    
+    # Lightning model
     model = SAGE(in_channels=datamodule.num_features, out_channels=datamodule.num_classes, hidden_channels=args.hidden_layer_size, num_layers=args.num_layers)
     
-    checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1, dirpath=checkpoint_path)
+    # Wandb logger
+    wandb_logger = WandbLogger(name='cc_baseline_hparams',project='GraphPOPE-sage-flickr-newmeans')
+    #wandb_logger.watch(model.net) #optional
+
+    # Trainer callbacks
+    checkpoint_path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint')
     early_stop_callback = EarlyStopping(monitor='val_acc', min_delta=0.00, patience=20, verbose=False, mode='max')
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
-    trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=args.epochs, logger=wandb_logger,
-                    callbacks=[checkpoint_callback, lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
+
+    # Trainer
+    # trainer = Trainer(gpus="1", max_epochs=args.epochs, logger=wandb_logger, checkpoint_callback=True, 
+    #                 callbacks=[lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
+
+
+    # Uncomment for multi GPU
+    trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=args.epochs, logger=wandb_logger, checkpoint_callback=True, 
+                    callbacks=[lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
 
     trainer.fit(model, datamodule=datamodule)
     trainer.test()
