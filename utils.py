@@ -9,7 +9,7 @@ from tqdm import tqdm
 import os.path as osp
 import sys
 from sklearn.metrics.pairwise import cosine_similarity, cosine_distances, euclidean_distances
-
+import pickle
 from sklearn.cluster import KMeans
 
 def sample_anchor_nodes(data, num_anchor_nodes, sampling_method):
@@ -220,7 +220,8 @@ def process_and_save_static_embedding(data, num_anchor_nodes, sampling_method):
     print(f'saved embedding as embedding_{sampling_method}_{num_anchor_nodes}')
 
 def load_preprocessed_embedding(data, num_anchor_nodes, sampling_method, run=4):
-    load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{run}.pt')
+    np.random.seed(run)
+    load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'embedding_{sampling_method}_{num_anchor_nodes}_run_{np.random.choice(19)}.pt')
     print('loading preprocessed embedding tensor...')
     embedding_tensor = torch.load(load_path)
     extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
@@ -311,43 +312,81 @@ def attach_alternative_embedding(data, num_anchor_nodes, embedding_method, metri
 
     return extended_features
     
+#### PUBMED
 
-    # if embedding_method == 'cosine':
-    #     if caching == True:
-    #         load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'cosine_{num_anchor_nodes}_seed_{seed}.pt')
-    #         if osp.isfile(load_path) == True:
-    #             print('Found cached cosine embedding!')
-    #             embedding_tensor = torch.load(load_path)
-    #             extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
-    #         else:
-    #             print('No cosine embedding found, deriving cosine embedding...')
-    #             embedding_matrix = Cosine(data, num_anchor_nodes, seed)
-    #             embedding_tensor = torch.as_tensor(embedding_matrix)
-    #             extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+def attach_pubmed(data, num_anchor_nodes, version, seed):
+    centrality_map = {
+        'closeness_centrality': 'cc',
+        'betweenness_centrality': 'bc',
+        'clustering_coefficient': 'clustering',
+        'degree_centrality': 'dc',
+        'eigenvector_centrality': 'ec',
+    }
 
-    #     else:
-    #         print('Deriving cosine embedding...')
-    #         embedding_matrix = Cosine(data, num_anchor_nodes, seed)
-    #         embedding_tensor = torch.as_tensor(embedding_matrix)
-    #         extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
-        
-    # if embedding_method == 'euclidean':
-    #     if caching == True:
-    #         load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'euclidean_{num_anchor_nodes}_seed_{seed}.pt')
-    #         if osp.isfile(load_path) == True:
-    #             print('Found cached euclidean embedding!')
-    #             embedding_tensor = torch.load(load_path)
-    #             extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
-    #         else:
-    #             print('No euclidean embedding found, deriving euclidean embedding...')
-    #             embedding_tensor = Euclidean(data, num_anchor_nodes, seed)
-    #             extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    if version == 'stochastic':
+        np.random.seed(seed)
+        node_indices = np.arange(data.num_nodes)
+        sampled_anchor_nodes = np.random.choice(node_indices, num_anchor_nodes)
+    
+    else:
+        centrality_abbr = centrality_map[version]
+        centrality_load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'pubmed_{centrality_abbr}.pickle')
+        with open(centrality_load_path, 'rb') as centrality_handle:
+            centralities = pickle.load(centrality_handle)
+        sampled_anchor_nodes = list(centralities.keys())[-num_anchor_nodes:]
 
-    #     else:
-    #         print('Deriving euclidean embedding...')
-    #         embedding_tensor = Euclidean(data, num_anchor_nodes, seed)
-    #         embedding_tensor = torch.as_tensor(embedding_matrix)
-    #         extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    geodesic_load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', 'pubmed_path_lengths.pickle')
+    with open(geodesic_load_path, 'rb') as handle:
+        shortest_paths = pickle.load(handle)
 
-    # print('feature matrix is blessed by the POPE', '\n', f'feature matrix shape: {extended_features.shape}')
-    # return extended_features
+    anchor_embeddings = []
+    for node in range(data.num_nodes):
+        anchor_vector = []
+        for anchor_node in sampled_anchor_nodes:
+            distance = shortest_paths[node][anchor_node]
+            dist = 0 if distance == 0 else 1/distance
+            anchor_vector.append(dist)
+        anchor_embeddings.append(anchor_vector)
+
+    embedding_tensor = torch.FloatTensor(anchor_embeddings)
+    extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    return extended_features
+
+#### Premapped
+def attach_pope(data, dataset, num_anchor_nodes, version, seed):
+    centrality_map = {
+        'closeness_centrality': 'cc',
+        'betweenness_centrality': 'bc',
+        'clustering_coefficient': 'clustering',
+        'degree_centrality': 'dc',
+        'eigenvector_centrality': 'ec',
+    }
+
+    if version == 'stochastic':
+        np.random.seed(seed)
+        node_indices = np.arange(data.num_nodes)
+        sampled_anchor_nodes = np.random.choice(node_indices, num_anchor_nodes)
+    
+    else:
+        centrality_abbr = centrality_map[version]
+        centrality_load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'{dataset}_{centrality_abbr}.pickle')
+        with open(centrality_load_path, 'rb') as centrality_handle:
+            centralities = pickle.load(centrality_handle)
+        sampled_anchor_nodes = list(centralities.keys())[-num_anchor_nodes:]
+
+    geodesic_load_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'{dataset}_path_lengths.pickle')
+    with open(geodesic_load_path, 'rb') as handle:
+        shortest_paths = pickle.load(handle)
+
+    anchor_embeddings = []
+    for node in range(data.num_nodes):
+        anchor_vector = []
+        for anchor_node in sampled_anchor_nodes:
+            distance = shortest_paths[node][anchor_node]
+            dist = 0 if distance == 0 else 1/distance
+            anchor_vector.append(dist)
+        anchor_embeddings.append(anchor_vector)
+
+    embedding_tensor = torch.FloatTensor(anchor_embeddings)
+    extended_features = torch.cat((data.x, embedding_tensor), 1) #concatenate with X along dimension 1
+    return extended_features
