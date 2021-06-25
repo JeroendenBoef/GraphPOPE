@@ -27,6 +27,6 @@ model = Node2Vec(data.edge_index, embedding_dim=128, walk_length=20,
 vec = model()
 embeddings = model(torch.arange(data.num_nodes, device=device))
 
-save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'processed_embeddings', f'{dataset.lower()}_node2vec.pt')
+save_path = osp.join(osp.dirname(osp.realpath(__file__)), 'data', f'{dataset.lower()}_node2vec.pt')
 torch.save(embeddings, save_path)
 print(f'saved node2vec embedding as {dataset.lower()}_node2vec.pt!')
