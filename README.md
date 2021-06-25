@@ -11,7 +11,7 @@ Node property prediction experiment results on the Flickr and Pubmed benchmarkin
 
 | Name                      | Flickr        | Pubmed    |
 | --------------------------|:-------------:| ---------:|
-| Betweenness centrality    | 53.93         | 89.14     |
+| Betweenness centrality    | 52.93         | 89.14     |
 | Closeness centrality      | 52.55         | 89.28     |
 | Degree centrality         | 52.92         | 89.32     |
 | Clustering coefficient    | 52.63         | 89.40     |
