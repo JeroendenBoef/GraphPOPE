@@ -12,7 +12,6 @@ from torch_sparse import SparseTensor
 from torch.nn import ModuleList, BatchNorm1d
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-#import torchmetrics
 import pytorch_lightning as pl
 from pytorch_lightning.metrics import Accuracy
 from pytorch_lightning.loggers import WandbLogger
@@ -32,11 +31,11 @@ from utils import Graphpope
 parser = argparse.ArgumentParser(description='GraphPOPE')
 
 # Pope arguments
-parser.add_argument('--dataset', type=str, default='pubmed') # flickr, pubmed
-parser.add_argument('--embedding_space', type=str, default='node2vec') # node2vec, geodesic
-parser.add_argument('--sampling_method', type=str, default='stochastic') # stochastic, closeness_centrality, degree_centrality
-parser.add_argument('--num_anchor_nodes', type=int, default=64)
-parser.add_argument('--distance_function', type=str, default='similarity') # distance, similarity, euclidean
+parser.add_argument('--dataset', type=str, default='flickr') # flickr, pubmed
+parser.add_argument('--embedding_space', type=str, default='geodesic') # node2vec, geodesic
+parser.add_argument('--sampling_method', type=str, default='degree_centrality') # for geodesic: 'stochastic', 'closeness_centrality', 'degree_centrality', 'eigenvector_centrality', 'pagerank', 'clustering_coefficient'   for node2vec: 'stochastic', 'kmeans'
+parser.add_argument('--num_anchor_nodes', type=int, default=2)
+parser.add_argument('--distance_function', type=str, default=None) # distance, similarity, euclidean
 parser.add_argument('--num_workers', type=int, default=6)
 
 # Additional hyperparams
@@ -44,9 +43,11 @@ parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--num_layers', type=int, default=3)
 parser.add_argument('--hidden_layer_size', type=int, default=256)
-parser.add_argument('--batch_size', type=int, default=625)
+parser.add_argument('--batch_size', type=int, default=1550)
 parser.add_argument('--epochs', type=int, default=300)
 parser.add_argument('--seed', type=int, default=42)
+parser.add_argument('--wandb_logging', type=bool, default=False)
+parser.add_argument('--n_gpus', type=int, default=1)
 args = parser.parse_args()
 print(args)
 
@@ -56,11 +57,15 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 class Batch(NamedTuple):
+    """Helper class for neighborsamper with sparse tensors"""
     x: Tensor
     y: Tensor
     adjs_t: List[SparseTensor]
 
 class Flickr(LightningDataModule):
+    """
+    PL datamodule, requires a data dir path, batch size, n anchor nodes as input, returns a LightningDataModule for Flickr
+    """
     def __init__(self, data_dir: str, batch_size: int, num_anchor_nodes: int,
                  in_memory: bool = False):
         super().__init__()
@@ -84,6 +89,8 @@ class Flickr(LightningDataModule):
         self.data = PyGFlickr(self.data_dir)[0]
         row, col = self.data.edge_index
         self.data.edge_weight = 1. / degree(col, self.data.num_nodes)[col]  # Norm by in-degree.
+
+        # Attach GraphPOPE embeddings
         if args.embedding_space != 'baseline':
             self.data.x = Graphpope(data=self.data, dataset=args.dataset, 
             embedding_space=args.embedding_space, sampling_method=args.sampling_method, 
@@ -116,6 +123,9 @@ class Flickr(LightningDataModule):
         )
 
 class PubMed(LightningDataModule):
+    """
+    PL datamodule, requires a data dir path, batch size, n anchor nodes as input, returns a LightningDataModule for PubMed
+    """
     def __init__(self, data_dir: str, batch_size: int, num_anchor_nodes: int,
                  in_memory: bool = False):
         super().__init__()
@@ -261,23 +271,23 @@ def main():
     # Lightning model
     model = SAGE(in_channels=datamodule.num_features, out_channels=datamodule.num_classes, hidden_channels=args.hidden_layer_size, num_layers=args.num_layers)
     
-    # Wandb logger
-    # wandb_logger = WandbLogger(name=f'scaled_{args.sampling_method}',project='GraphPOPE-sage-flickr-newmeans')
-    #wandb_logger.watch(model.net) #optional
+    # Wandb logging and monitoring - uncomment and add logger=wandb_logger to trainer arguments to enable wandb logging
+    if args.wandb_logging == True:
+        wandb_logger = WandbLogger(name=f'{args.embedding_space}_{args.sampling_method}',project='GraphPOPE')
 
     # Trainer callbacks
     checkpoint_path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'flickr_checkpoint')
     early_stop_callback = EarlyStopping(monitor='val_acc', min_delta=0.00, patience=20, verbose=False, mode='max')
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
-    # Trainer - enable wandb logging by adding logger=wandb_logger
-    trainer = Trainer(gpus=1, max_epochs=args.epochs, checkpoint_callback=True, 
-                    callbacks=[lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
-    print(datamodule.num_classes, datamodule.num_features)
+    # Trainer - enable wandb logging by setting args.wandb_logging = True
+    if args.wandb_logging == True:
+        trainer = Trainer(gpus=args.n_gpus, accelerator='ddp', max_epochs=args.epochs, checkpoint_callback=True, logger=wandb_logger, 
+                        callbacks=[lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
 
-    # Uncomment for multi GPU
-    # trainer = Trainer(gpus=2, accelerator='ddp', max_epochs=args.epochs, checkpoint_callback=True, 
-    #                 callbacks=[lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
+    else:
+        trainer = Trainer(gpus=args.n_gpus, accelerator='ddp', max_epochs=args.epochs, checkpoint_callback=True, 
+                        callbacks=[lr_monitor, early_stop_callback], gradient_clip_val=0.5, default_root_dir = checkpoint_path)
 
     trainer.fit(model, datamodule=datamodule)
     trainer.test()

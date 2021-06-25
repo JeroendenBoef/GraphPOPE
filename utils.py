@@ -179,12 +179,32 @@ def attach_node2vec(data, dataset, num_anchor_nodes, sampling_method, distance_f
     print('feature matrix is blessed by the POPE')
     return extended_features
 
-def Graphpope(data, dataset, embedding_space, sampling_method, num_anchor_nodes, distance_function=None, num_workers=4):
+def Graphpope(data, dataset: str, embedding_space: str, sampling_method: str, num_anchor_nodes: int, distance_function=None, num_workers=4):
+    """
+    Derive GraphPOPE embeddings for the provided data object.
+
+    dataset: {'flickr', 'pubmed'}, required for cached nodevec embeddings of the graph.
+    embedding_space: {'node2vec', 'geodesic'}, required to determine in which space anchor node distance is derived, geodesic distance or embedding space distance.
+    sampling_method: {'stochastic', 'kmeans', 'closeness_centrality', 'degree_centrality', 'eigenvector_centrality', 'pagerank', 'clustering_coefficient'}, used to determine stochastic or biased anchor node sampling. In case of biased sampling, determines centrality metric.
+    num_anchor_nodes: int, the amount of anchor nodes to sample and subsequently generate distance embeddings for. 0 anchor nodes results in a baseline GraphSAGE model.
+    distance_function: {None, 'distance', 'similarity', 'euclidean'}, determines the distance metric used for embedding space distance calculation for the node2vec implementation. None if embedding_space == 'geodesic'.
+    num_workers: int, the amount of workers for multiprocessing of shortest path calculation.
+    
+    Returns the GraphPOPE feature embeddings concatenated with the original feature matrix.
+    """
+    global cached_pope_embedding #for caching
     pope_map = {
         'geodesic': attach_distance_embedding,
         'node2vec': attach_node2vec,
     }
+
+    # Avoid deriving pope embeddings twice due to test dataloader instantiating a new LightningDataModule after training conclusion
+    try:
+        enhanced_features = cached_pope_embedding
+        
+    except NameError:
+        pope = pope_map[embedding_space]
+        enhanced_features = pope(data, dataset, num_anchor_nodes, sampling_method, distance_function, num_workers=num_workers)
+        cached_pope_embedding = enhanced_features
     
-    pope = pope_map[embedding_space]
-    enhanced_features = pope(data, dataset, num_anchor_nodes, sampling_method, distance_function, num_workers=num_workers)
     return enhanced_features
