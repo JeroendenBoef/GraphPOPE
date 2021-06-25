@@ -30,8 +30,11 @@ Node property prediction experiment results on the Flickr and Pubmed benchmarkin
 - wandb 0.10.31
 - numpy 1.18.1
 
+# Data
+Flickr and PubMed data will be downloaded to the provided directory if they are not found. Download the raw and processed files and store them in a /data dir within the GraphPOPE dir. Embedding space versions of GraphPOPE require a node2vec embedding of the given dataset. Use `generate_node2vec_embedding.py` to generate these for Flickr & Pubmed to enable GraphPOPE-node2vec.
+
 # Experiments
-Datasets and LightningModules are combined in main, GraphPOPE embedding generation helper functions can be found in utils. Perform a 256 anchor nodes, stochastically sampled GraphPOPE-geodesic experiment on Flickr with:
+Datasets and LightningModules are combined in main, GraphPOPE embedding generation helper functions can be found in `utils.py`. Perform a 256 anchor nodes, stochastically sampled GraphPOPE-geodesic experiment on Flickr with:
 ```
 python main.py \
 --dataset "flickr" \
@@ -50,7 +53,7 @@ python main.py \
 --n_gpus 1
 ```
 
-Argument options of main.py:
+Argument options of `main.py`:
 ```
 --dataset               dataset for cached node2vec embeddings of the graph {'flickr', 'pubmed'} (default: 'flickr')
 --embedding_space       space for distance calculation {'geodesic', 'node2vec'} (default: 'geodesic')
