@@ -6,6 +6,22 @@ We provide 2 streams of implementations: GraphPOPE-geodesic and an embedding spa
 
 This is a personal repository for my Information Studies - Data Science track master thesis titled: "GraphPOPE: Retaining Structural Graph Information Using Position-aware Node Embeddings".
 
+# Results
+Node property prediction experiment results on the Flickr and Pubmed benchmarking datasets. Displayed results are averages over 20 runs in a range of fixed seeds to ensure reproducability. Highest accuracy values are denoted in **bold**.
+
+| Name                      | Flickr        | Pubmed    |
+| --------------------------|:-------------:| ---------:|
+| Betweenness centrality    | 53.93         | 89.14     |
+| Closeness centrality      | 52.55         | 89.28     |
+| Degree centrality         | 52.92         | 89.32     |
+| Clustering coefficient    | 52.63         | 89.40     |
+| Eigenvector centrality    | 52.48         | 89.29     |
+| PageRank                  | **52.94**     | 89.05     |
+| Stochastic                | 52.75         | **89.55** |
+| node2vec-cdist            | 51.70         | 89.52     |
+| node2vec-euclidean        | 51.68         | 89.52     |
+| Baseline GraphSAGE        | 51.78         | 89.51     |
+
 # Dependencies
 - torch 1.8.0 (CUDA 11.1)
 - torch-geometric 1.7.0
@@ -36,19 +52,20 @@ python main.py \
 
 Argument options of main.py:
 ```
---dataset                           dataset for cached node2vec embeddings of the graph {'flickr', 'pubmed'} (default: 'flickr')
---embedding_space                   space for distance calculation {'geodesic', 'node2vec'} (default: 'geodesic')
---sampling_method                   approach to anchor node sampling, geodesic: {'stochastic', 'closeness_centrality', 'degree_centrality', 'eigenvector_centrality', 'pagerank', 'clustering_coefficient'}, node2vec: {'stochastic', 'kmeans'} (default: 'stochastic')
---num_anchor_nodes                  amount of anchor nodes to use, 0 anchor nodes results in baseline model (default: 256)
---distance_function                 distance function for GraphPOPE-node2vec {'distance', 'similarity', 'euclidean'} (default: None)
---num_workers                       amount of workers for sssp geodesic distance calculation (default: 6)
---dropout                           dropout rate (default: 0.5)
---lr                                learning rate (default: 0.001)
---num_layers                        number of convolutional layers used in the model (default: 3)
---batch_size                        batch size for training (default: 1550)
---epochs                            number of max epochs to train for (default: 300) 
---seed                              global seed for reproducability (default: 42)
---wandb_logging                     enable logging through weights & biases (default: False)
---n_gpus 1                          number of gpus to train on (default: 1)
+--dataset               dataset for cached node2vec embeddings of the graph {'flickr', 'pubmed'} (default: 'flickr')
+--embedding_space       space for distance calculation {'geodesic', 'node2vec'} (default: 'geodesic')
+--sampling_method       approach to anchor node sampling, geodesic: {'stochastic', 'closeness_centrality', 'degree_centrality', 'eigenvector_centrality',
+                        'pagerank', 'clustering_coefficient'}, node2vec: {'stochastic', 'kmeans'} (default: 'stochastic')
+--num_anchor_nodes      amount of anchor nodes to use, 0 anchor nodes results in baseline model (default: 256)
+--distance_function     distance function for GraphPOPE-node2vec {'distance', 'similarity', 'euclidean'} (default: None)
+--num_workers           amount of workers for sssp geodesic distance calculation (default: 6)
+--dropout               dropout rate (default: 0.5)
+--lr                    learning rate (default: 0.001)
+--num_layers            number of convolutional layers used in the model (default: 3)
+--batch_size            batch size for training (default: 1550)
+--epochs                number of max epochs to train for (default: 300) 
+--seed                  global seed for reproducability (default: 42)
+--wandb_logging         enable logging through weights & biases (default: False)
+--n_gpus 1              number of gpus to train on (default: 1)
 
 ```
